@@ -481,7 +481,6 @@
         game.turn *= -1;
         game.no_cap = caps.length > 0 ? 0 : game.no_cap + 1;
         
-        // Track 1 piece left rule
         let w = 0, b = 0;
         for (let r=0; r<8; r++) for (let c=0; c<8; c++) {
             if (game.board[r][c] > 0) w++;
@@ -649,14 +648,12 @@
 <script>
     // FIXED APP MODE DETECTION
     function isAppMode() {
-        // Checks if URL has ?app=1, ?app=true, etc. using URLSearchParams
         const urlParams = new URLSearchParams(window.location.search);
         if (urlParams.has('app')) return true;
+        if (urlParams.has('deposit') && urlParams.get('status') === 'success') return true;
         
-        // Checks standard PWA standalone mode
         if (window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true) return true;
         
-        // Fallback for Android WebView (often used by app wrappers like Nativine)
         const ua = navigator.userAgent.toLowerCase();
         if (ua.includes('wv') || ua.includes('nativine')) return true; 
         
@@ -775,6 +772,49 @@
         }
     }
 
+    // Check if returning from Paychangu
+    async function checkDepositReturn() {
+        const urlParams = new URLSearchParams(window.location.search);
+        const depTx = urlParams.get('deposit');
+        const depStatus = urlParams.get('status');
+        
+        if (depTx && depStatus === 'success') {
+            // Clean the URL so it doesn't loop on refresh
+            window.history.replaceState({}, document.title, window.location.pathname);
+            
+            document.getElementById('procTitle').innerText = "Verifying Deposit";
+            document.getElementById('procText').innerText = "Please wait while we confirm your payment...";
+            document.getElementById('processingModal').style.display = 'flex';
+            
+            // Poll Firebase to see if the webhook has approved it
+            let attempts = 0;
+            let approved = false;
+            
+            while(attempts < 10) {
+                attempts++;
+                try {
+                    const snap = await db.ref('pending_deposits/' + depTx).get();
+                    if (snap.exists()) {
+                        let depData = snap.val();
+                        if (depData.status === 'approved' || depData.status === 'completed') {
+                            document.getElementById('processingModal').style.display = 'none';
+                            alert("Deposit successful! MWK " + depData.amount + " has been added to your balance.");
+                            approved = true;
+                            break;
+                        }
+                    }
+                } catch(e) {}
+                
+                await new Promise(r => setTimeout(r, 2000)); // wait 2 seconds before retry
+            }
+            
+            if (!approved) {
+                document.getElementById('processingModal').style.display = 'none';
+                alert("Payment received! Your balance will be updated automatically once processing completes. If you face any issues, please contact support.");
+            }
+        }
+    }
+
     window.onload = function() {
         // Age Verification Check
         if (!localStorage.getItem('age_verified')) {
@@ -791,6 +831,10 @@
             showAuth(); 
             return;
         }
+        
+        // Check if returning from payment
+        checkDepositReturn();
+
         let savedUser = localStorage.getItem('mw_session_user');
         if (savedUser) {
             db.ref('users/' + savedUser).get().then(snapshot => {
@@ -1074,10 +1118,13 @@
         document.getElementById('procText').innerText = "Please wait while we redirect you to Paychangu...";
         document.getElementById('processingModal').style.display = 'flex';
 
+        // FIXED: Always get UID from secure local storage to prevent undefined errors
+        let currentUid = localStorage.getItem('mw_session_user');
+
         fetch(`${API_BASE}/deposit`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ uid: currentUser.username, amount: amount })
+            body: JSON.stringify({ uid: currentUid, amount: amount, phone: currentUser.phone })
         })
         .then(r => r.json())
         .then(data => {
@@ -1118,10 +1165,13 @@
         document.getElementById('procText').innerText = "Sending request to Paychangu...";
         document.getElementById('processingModal').style.display = 'flex';
 
+        // FIXED: Always get UID from secure local storage to prevent undefined errors
+        let currentUid = localStorage.getItem('mw_session_user');
+
         fetch(`${API_BASE}/withdraw`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ uid: currentUser.username, amount: amount })
+            body: JSON.stringify({ uid: currentUid, amount: amount })
         })
         .then(r => r.json())
         .then(data => {
@@ -1150,11 +1200,26 @@
             if (type === 'tx') {
                 let txs = [];
                 
+                // Fetch Withdrawals
                 const wdSnap = await db.ref('withdraw_requests').orderByChild('uid').equalTo(currentUser.username).once('value');
-                wdSnap.forEach(c => txs.push({ type: 'Withdraw', amount: c.val().amount, status: c.val().status, date: c.val().createdAt }));
+                wdSnap.forEach(c => {
+                    let d = c.val();
+                    txs.push({ type: 'Withdraw', amount: d.amount, status: d.status, date: d.createdAt || 0 });
+                });
                 
+                // Fetch Approved Deposits
                 const depSnap = await db.ref('deposit_requests').orderByChild('uid').equalTo(currentUser.username).once('value');
-                depSnap.forEach(c => txs.push({ type: 'Deposit', amount: c.val().amount, status: c.val().status, date: c.val().creditedAt }));
+                depSnap.forEach(c => {
+                    let d = c.val();
+                    txs.push({ type: 'Deposit', amount: d.amount, status: d.status, date: d.creditedAt || d.createdAt || 0 });
+                });
+
+                // Fetch Pending Deposits (so users see their pending payments too)
+                const pendSnap = await db.ref('pending_deposits').orderByChild('uid').equalTo(currentUser.username).once('value');
+                pendSnap.forEach(c => {
+                    let d = c.val();
+                    txs.push({ type: 'Deposit', amount: d.amount, status: 'pending', date: d.createdAt || 0 });
+                });
 
                 txs.sort((a, b) => b.date - a.date);
 
@@ -1270,13 +1335,14 @@
             result = "Loss";
         }
 
+        // IMPROVED: Added .catch to log errors if it fails to save
         if (currentStake > 0) {
             db.ref('users/' + currentUser.username + '/game_history').push({
                 result: result,
                 stake: currentStake,
                 payout: result === 'Win' ? payout : 0,
                 timestamp: Date.now()
-            });
+            }).catch(e => console.error("Error saving game history: ", e));
         }
 
         document.getElementById('resultTitle').innerText = title;
@@ -1344,7 +1410,6 @@
         g.turn *= -1; 
         g.no_cap = caps.length > 0 ? 0 : g.no_cap + 1; 
         
-        // Track 1 piece left rule
         let w = 0, b = 0;
         for (let r=0; r<8; r++) for (let c=0; c<8; c++) {
             if (g.board[r][c] > 0) w++;
@@ -1483,4 +1548,4 @@
 </script>
 
 </body>
-    </html>
+                                                                                                                                      </html> 
