@@ -281,7 +281,9 @@
             2. Kings are "Flying" (move/capture any distance).<br>
             3. Captures are MANDATORY if available.<br>
             4. You can choose any capture path (not forced to take maximum).<br>
-            5. Mid-jump promotion to King is allowed.<br><br>
+            5. Mid-jump promotion to King is allowed.<br>
+            6. If you have 1 piece left, you have 12 moves to capture. If you fail, the game is a Draw.<br>
+            7. 1 King vs 1 King is a Draw.<br><br>
             <strong style="color:#f1c40f;">App & Withdrawal Rules:</strong><br>
             1. Processing instant.<br>
             2. Min withdrawal 50 MWK.<br>
@@ -470,7 +472,7 @@
         let path = move.path, caps = move.caps;
         let sr = path[0][0], sc = path[0][1], er = path[path.length-1][0], ec = path[path.length-1][1];
         let piece = game.board[sr][sc];
-        let undo = { piece, start: [sr, sc], end: [er, ec], caps: caps.map(c => [c[0], c[1], game.board[c[0]][c[1]]]), turn: game.turn, no_cap: game.no_cap };
+        let undo = { piece, start: [sr, sc], end: [er, ec], caps: caps.map(c => [c[0], c[1], game.board[c[0]][c[1]]]), turn: game.turn, no_cap: game.no_cap, w1p: game.white_1p_moves || 0, b1p: game.black_1p_moves || 0 };
         game.board[sr][sc] = EMPTY;
         for (let cap of caps) game.board[cap[0]][cap[1]] = EMPTY;
         let final = piece;
@@ -478,11 +480,36 @@
         game.board[er][ec] = final;
         game.turn *= -1;
         game.no_cap = caps.length > 0 ? 0 : game.no_cap + 1;
+        
+        // Track 1 piece left rule
+        let w = 0, b = 0;
+        for (let r=0; r<8; r++) for (let c=0; c<8; c++) {
+            if (game.board[r][c] > 0) w++;
+            else if (game.board[r][c] < 0) b++;
+        }
+        
+        let mover = -game.turn;
+        let isCap = caps.length > 0;
+        
+        if (w === 1) {
+            game.white_1p_moves = (mover === WHITE && !isCap) ? (game.white_1p_moves || 0) + 1 : 0;
+        } else {
+            game.white_1p_moves = 0;
+        }
+        
+        if (b === 1) {
+            game.black_1p_moves = (mover === BLACK && !isCap) ? (game.black_1p_moves || 0) + 1 : 0;
+        } else {
+            game.black_1p_moves = 0;
+        }
+        
         return undo;
     }
 
     function undoMove(game, u) {
         game.turn = u.turn; game.no_cap = u.no_cap;
+        game.white_1p_moves = u.w1p; 
+        game.black_1p_moves = u.b1p;
         let sr = u.start[0], sc = u.start[1], er = u.end[0], ec = u.end[1];
         game.board[er][ec] = EMPTY; game.board[sr][sc] = u.piece;
         for (let cap of u.caps) game.board[cap[0]][cap[1]] = cap[2];
@@ -552,7 +579,7 @@
                 if (alpha >= beta) return ttEntry.score;
             }
         }
-        if (game.no_cap >= 50) return 0;
+        if (game.no_cap >= 50 || (game.white_1p_moves || 0) >= 12 || (game.black_1p_moves || 0) >= 12) return 0;
         let moves = legalMoves(game, game.turn);
         if (moves.length === 0) return -100000 + ply;
         if (depth <= 0) return quiesce(game, alpha, beta, ply);
@@ -1257,7 +1284,7 @@
         document.getElementById('resultModal').style.display = 'flex';
     }
 
-    function createGame() { return { board: Array(8).fill(0).map(() => Array(8).fill(EMPTY)), turn: WHITE, no_cap: 0 }; }
+    function createGame() { return { board: Array(8).fill(0).map(() => Array(8).fill(EMPTY)), turn: WHITE, no_cap: 0, white_1p_moves: 0, black_1p_moves: 0 }; }
     function setupBoard(g) { for (let r = 0; r < 3; r++) for (let c = 0; c < 8; c++) if ((r + c) % 2 === 1) g.board[r][c] = B_MAN; for (let r = 5; r < 8; r++) for (let c = 0; c < 8; c++) if ((r + c) % 2 === 1) g.board[r][c] = W_MAN; }
     function pcolor(p) { return p > 0 ? 1 : (p < 0 ? -1 : 0); }
     function in_b(r, c) { return r >= 0 && r < 8 && c >= 0 && c < 8; }
@@ -1305,7 +1332,40 @@
     function allCaptures(g, player) { let res = []; for (let r=0; r<8; r++) for (let c=0; c<8; c++) { let p = g.board[r][c]; if (p !== EMPTY && pcolor(p) === player) _find_caps(g, r, c, p, [], [r, c], res); } return res; }
     function allSimple(g, player) { let moves = []; for (let r=0; r<8; r++) for (let c=0; c<8; c++) { let p = g.board[r][c]; if (p === EMPTY || pcolor(p) !== player) continue; if (Math.abs(p) === 1) { let dirs = player === WHITE ? DIRS_W : DIRS_B; for (let [dr, dc] of dirs) { let tr = r + dr, tc = c + dc; if (in_b(tr, tc) && g.board[tr][tc] === EMPTY) moves.push({ path: [[r, c], [tr, tc]], caps: [] }); } } else { for (let [dr, dc] of DIRS4) { let tr = r + dr, tc = c + dc; while (in_b(tr, tc) && g.board[tr][tc] === EMPTY) { moves.push({ path: [[r, c], [tr, tc]], caps: [] }); tr += dr; tc += dc; } } } } return moves; }
     function legalMoves(g, player) { player = player || g.turn; let caps = allCaptures(g, player); if (caps.length > 0) return caps; return allSimple(g, player); }
-    function makeMove(g, move) { let path = move.path, caps = move.caps; let sr = path[0][0], sc = path[0][1], er = path[path.length-1][0], ec = path[path.length-1][1]; let piece = g.board[sr][sc]; g.board[sr][sc] = EMPTY; for (let cap of caps) g.board[cap[0]][cap[1]] = EMPTY; let final = piece; if (Math.abs(piece) === 1) { if ((piece === 1 && er === 0) || (piece === -1 && er === 7)) final = piece * 2; } g.board[er][ec] = final; g.turn *= -1; g.no_cap = caps.length > 0 ? 0 : g.no_cap + 1; }
+    function makeMove(g, move) { 
+        let path = move.path, caps = move.caps; 
+        let sr = path[0][0], sc = path[0][1], er = path[path.length-1][0], ec = path[path.length-1][1]; 
+        let piece = g.board[sr][sc]; 
+        g.board[sr][sc] = EMPTY; 
+        for (let cap of caps) g.board[cap[0]][cap[1]] = EMPTY; 
+        let final = piece; 
+        if (Math.abs(piece) === 1) { if ((piece === 1 && er === 0) || (piece === -1 && er === 7)) final = piece * 2; } 
+        g.board[er][ec] = final; 
+        g.turn *= -1; 
+        g.no_cap = caps.length > 0 ? 0 : g.no_cap + 1; 
+        
+        // Track 1 piece left rule
+        let w = 0, b = 0;
+        for (let r=0; r<8; r++) for (let c=0; c<8; c++) {
+            if (g.board[r][c] > 0) w++;
+            else if (g.board[r][c] < 0) b++;
+        }
+        
+        let mover = -g.turn;
+        let isCap = caps.length > 0;
+        
+        if (w === 1) {
+            g.white_1p_moves = (mover === WHITE && !isCap) ? (g.white_1p_moves || 0) + 1 : 0;
+        } else {
+            g.white_1p_moves = 0;
+        }
+        
+        if (b === 1) {
+            g.black_1p_moves = (mover === BLACK && !isCap) ? (g.black_1p_moves || 0) + 1 : 0;
+        } else {
+            g.black_1p_moves = 0;
+        }
+    }
 
     const workerCode = document.getElementById('worker-code').textContent;
     const blob = new Blob([workerCode], { type: 'application/javascript' });
@@ -1340,7 +1400,7 @@
     }
 
     function checkGameOver() {
-        if (game.no_cap >= 50) { endMatch(0, false); return true; }
+        if (game.no_cap >= 50 || (game.white_1p_moves || 0) >= 12 || (game.black_1p_moves || 0) >= 12) { endMatch(0, false); return true; }
         let w = 0, b = 0;
         for (let r=0; r<8; r++) for (let c=0; c<8; c++) { if (game.board[r][c] > 0) w++; else if (game.board[r][c] < 0) b++; }
         if (w === 0) { endMatch(BLACK, false); return true; }
