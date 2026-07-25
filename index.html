@@ -12,6 +12,7 @@
         body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: #121212; color: #e0e0e0; display: flex; flex-direction: column; justify-content: space-between; align-items: center; min-height: 100vh; overflow-x: hidden; touch-action: manipulation; }
         .header { width: 100%; max-width: 500px; padding: 15px; display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; }
         .title { font-size: 20px; font-weight: 600; color: #ffffff; }
+        .header-actions { display: flex; gap: 8px; }
         .menu-btn { background: #2c2c2c; border: none; color: #fff; padding: 8px 16px; border-radius: 20px; font-size: 14px; cursor: pointer; }
         .main-content { flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; width: 100%; max-width: 500px; padding-bottom: 20px; }
         .view { width: 100%; max-width: 500px; display: none; flex-direction: column; align-items: center; padding: 0 15px; }
@@ -91,6 +92,7 @@
         .terms-text { text-align: left; font-size: 12px; color: #888; max-height: 200px; overflow-y: auto; background: #121212; padding: 15px; border-radius: 8px; margin-bottom: 20px; line-height: 1.5; border: 1px solid #333; }
         .terms-text h3 { color: #f1c40f; font-size: 14px; margin-bottom: 5px; margin-top: 10px; }
         .terms-text h3:first-child { margin-top: 0; }
+        .terms-text p { margin-bottom: 10px; color: #ccc; font-size: 13px; line-height: 1.4; }
     </style>
 </head>
 <body>
@@ -109,6 +111,30 @@
         </div>
         <button type="button" onclick="acceptAge()" style="background:#27ae60; color:#fff;">I am 18+ and I Accept</button>
         <button type="button" class="secondary" onclick="declineAge()">Exit</button>
+    </div>
+</div>
+
+<!-- FAQ MODAL -->
+<div class="modal-overlay" id="faqModal">
+    <div class="modal">
+        <h2>Frequently Asked Questions</h2>
+        <div class="terms-text">
+            <h3>What happens if I disconnect or close the app?</h3>
+            <p>If you close the app, refresh the page, or lose connection during a match, it is considered a forfeit. You will instantly lose the match and your stake. Make sure you have a stable connection before starting a game!</p>
+            
+            <h3>Why was my account banned?</h3>
+            <p>Accounts are automatically banned if our system detects a VPN, proxy, or any fraudulent activity. This is to protect fair play. If you believe this was a mistake, contact support.</p>
+            
+            <h3>How long do withdrawals take?</h3>
+            <p>Withdrawals are processed instantly to your registered Airtel or TNM number. If there is a network issue on the provider's side, it will be marked for manual review and processed within 1 hour.</p>
+            
+            <h3>Why must I take a capture?</h3>
+            <p>In Malawi Checkers, captures are mandatory. If you have a move to eat an opponent's piece, you must take it. You can choose which path to take if there are multiple options, but you cannot make a normal move if a capture is available.</p>
+            
+            <h3>What is the 12-move rule?</h3>
+            <p>If you are left with only 1 piece (Man or King), you have exactly 12 moves to capture an opponent's piece. If you play 12 moves without capturing, the game ends in a Draw.</p>
+        </div>
+        <button type="button" onclick="hideFaq()">Close</button>
     </div>
 </div>
 
@@ -138,7 +164,8 @@
 
 <div class="header">
     <div class="title">Malawi Checkers</div>
-    <div>
+    <div class="header-actions">
+        <button type="button" class="menu-btn" onclick="showFaq()">FAQ</button>
         <button type="button" class="menu-btn" onclick="showRules()">Rules</button>
         <button type="button" class="menu-btn" id="logoutBtn" style="display:none; background:#c0392b;" onclick="logout()">Logout</button>
     </div>
@@ -289,7 +316,8 @@
             2. Min withdrawal 50 MWK.<br>
             3. Withdrawals sent to your registered phone number.<br>
             4. Fake activity = Permanent ban.<br>
-            5. VPN usage = Permanent ban.
+            5. VPN usage = Permanent ban.<br>
+            6. Disconnecting or closing the app mid-game = Loss of stake.
         </p>
         <button type="button" onclick="hideRules()">Got it!</button>
     </div>
@@ -678,6 +706,10 @@
     function showTermsPrivacy() { document.getElementById('termsPrivacyModal').style.display = 'flex'; }
     function hideTermsPrivacy() { document.getElementById('termsPrivacyModal').style.display = 'none'; }
 
+    // FAQ LOGIC
+    function showFaq() { document.getElementById('faqModal').style.display = 'flex'; }
+    function hideFaq() { document.getElementById('faqModal').style.display = 'none'; }
+
     const firebaseConfig = {
         apiKey: "AIzaSyBRDfT-P8wzVAAZs8lveF1-ZTf8QlpRC5g",
         authDomain: "apple-green-ded09.firebaseapp.com",
@@ -713,6 +745,7 @@
     let game, humanPlayer = WHITE, selected = null, validMoves = [], isAiThinking = false;
     let currentStake = 0, isHidden = false;
     let currentUser = null, balanceListener = null;
+    let matchInProgress = false; // Track if a game is active for disconnect logic
 
     let logCaptchaAns = 0, regCaptchaAns = 0, resetCaptchaAns = 0;
 
@@ -793,10 +826,11 @@
             while(attempts < 10) {
                 attempts++;
                 try {
-                    const snap = await db.ref('pending_deposits/' + depTx).get();
+                    // Webhook moves it to 'deposits' and removes from 'pending_deposits'
+                    const snap = await db.ref('deposits/' + depTx).get();
                     if (snap.exists()) {
                         let depData = snap.val();
-                        if (depData.status === 'approved' || depData.status === 'completed') {
+                        if (depData.status === 'success' || depData.status === 'approved') {
                             document.getElementById('processingModal').style.display = 'none';
                             alert("Deposit successful! MWK " + depData.amount + " has been added to your balance.");
                             approved = true;
@@ -855,6 +889,20 @@
             showAuth();
         }
     };
+
+    // DISCONNECT = LOSS LOGIC
+    window.addEventListener('beforeunload', function(e) {
+        if (matchInProgress && currentUser) {
+            // Record loss due to disconnect
+            db.ref('users/' + currentUser.username + '/game_history').push({
+                result: "Loss (Disconnected)",
+                stake: currentStake,
+                payout: 0,
+                timestamp: Date.now()
+            }).catch(()=>{});
+            // Balance was already deducted at the start of the match, so no further deduction needed.
+        }
+    });
 
     function setupBalanceListener(uid) {
         if (!db) return;
@@ -1207,8 +1255,8 @@
                     txs.push({ type: 'Withdraw', amount: d.amount, status: d.status, date: d.createdAt || 0 });
                 });
                 
-                // Fetch Approved Deposits
-                const depSnap = await db.ref('deposit_requests').orderByChild('uid').equalTo(currentUser.username).once('value');
+                // Fetch Approved Deposits (Synced with webhook)
+                const depSnap = await db.ref('deposits').orderByChild('uid').equalTo(currentUser.username).once('value');
                 depSnap.forEach(c => {
                     let d = c.val();
                     txs.push({ type: 'Deposit', amount: d.amount, status: d.status, date: d.creditedAt || d.createdAt || 0 });
@@ -1276,6 +1324,7 @@
         db.ref('users/' + currentUser.username + '/mwk').set(currentUser.mwk);
         updateWalletUI();
         currentStake = stake;
+        matchInProgress = true; // Mark match as active
 
         document.getElementById('hubView').classList.remove('active');
         document.getElementById('gameView').classList.add('active');
@@ -1311,6 +1360,7 @@
     function endMatch(winner, isForfeit) {
         if (isAiThinking && !isForfeit) return;
         isAiThinking = true;
+        matchInProgress = false; // Mark match as ended
         
         let pot = currentStake * 2;
         let fee = pot * 0.20;
@@ -1548,4 +1598,4 @@
 </script>
 
 </body>
-                                                                                                                                      </html> 
+    </html>
