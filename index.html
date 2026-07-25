@@ -874,6 +874,9 @@
             db.ref('users/' + savedUser).get().then(snapshot => {
                 if (snapshot.exists()) {
                     currentUser = snapshot.val();
+                    // FORCE SAVE USERNAME LOCALLY TO PREVENT UNDEFINED ERRORS
+                    currentUser.username = savedUser; 
+                    
                     if (currentUser.banned) {
                         alert("Your account is banned. Reason: " + (currentUser.ban_reason || "Violation of rules."));
                         logout();
@@ -1075,6 +1078,9 @@
                 }
                 if (userData.password === pass) {
                     currentUser = userData;
+                    // FORCE SAVE USERNAME TO AVOID UNDEFINED ERRORS
+                    currentUser.username = u; 
+                    
                     localStorage.setItem('mw_session_user', u);
                     setupBalanceListener(u);
                     showHub();
@@ -1239,6 +1245,9 @@
 
     async function showHistory(type) {
         if (!currentUser) return;
+        let currentUid = localStorage.getItem('mw_session_user');
+        if (!currentUid) return;
+        
         document.getElementById('historyTitle').innerText = type === 'tx' ? 'Transactions' : 'Game History';
         document.getElementById('historyList').innerHTML = '<p style="text-align:center; color:#888;">Loading...</p>';
         document.getElementById('historyModal').style.display = 'flex';
@@ -1249,21 +1258,21 @@
                 let txs = [];
                 
                 // Fetch Withdrawals
-                const wdSnap = await db.ref('withdraw_requests').orderByChild('uid').equalTo(currentUser.username).once('value');
+                const wdSnap = await db.ref('withdraw_requests').orderByChild('uid').equalTo(currentUid).once('value');
                 wdSnap.forEach(c => {
                     let d = c.val();
                     txs.push({ type: 'Withdraw', amount: d.amount, status: d.status, date: d.createdAt || 0 });
                 });
                 
                 // Fetch Approved Deposits (Synced with webhook)
-                const depSnap = await db.ref('deposits').orderByChild('uid').equalTo(currentUser.username).once('value');
+                const depSnap = await db.ref('deposits').orderByChild('uid').equalTo(currentUid).once('value');
                 depSnap.forEach(c => {
                     let d = c.val();
                     txs.push({ type: 'Deposit', amount: d.amount, status: d.status, date: d.creditedAt || d.createdAt || 0 });
                 });
 
                 // Fetch Pending Deposits (so users see their pending payments too)
-                const pendSnap = await db.ref('pending_deposits').orderByChild('uid').equalTo(currentUser.username).once('value');
+                const pendSnap = await db.ref('pending_deposits').orderByChild('uid').equalTo(currentUid).once('value');
                 pendSnap.forEach(c => {
                     let d = c.val();
                     txs.push({ type: 'Deposit', amount: d.amount, status: 'pending', date: d.createdAt || 0 });
@@ -1284,7 +1293,7 @@
                     });
                 }
             } else if (type === 'games') {
-                const gSnap = await db.ref('users/' + currentUser.username + '/game_history').orderByChild('timestamp').limitToLast(20).once('value');
+                const gSnap = await db.ref('users/' + currentUid + '/game_history').orderByChild('timestamp').limitToLast(20).once('value');
                 let games = [];
                 gSnap.forEach(c => games.push(c.val()));
                 games.reverse();
@@ -1305,7 +1314,8 @@
             }
             document.getElementById('historyList').innerHTML = html;
         } catch (e) {
-            document.getElementById('historyList').innerHTML = `<p style="text-align:center; color:#c0392b;">Error loading history. Check DB rules.</p>`;
+            console.error("History Load Error:", e);
+            document.getElementById('historyList').innerHTML = `<p style="text-align:center; color:#c0392b;">Error: ${e.message}</p>`;
         }
     }
 
@@ -1598,4 +1608,4 @@
 </script>
 
 </body>
-    </html>
+                                                                                                          </html>
