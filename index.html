@@ -441,7 +441,8 @@
                 
                 let sub_res = [];
                 _find_caps(game, tr, tc, new_piece, new_caps, start, sub_res);
-                if (sub_res.length > 0) { for (let s of sub_res) res.push({ path: [[r, c], ...s.path.slice(1)], caps: s.caps }); }
+                // FIXED: Include intermediate squares in path
+                if (sub_res.length > 0) { for (let s of sub_res) res.push({ path: [[r, c], ...s.path], caps: s.caps }); }
                 else { res.push({ path: [[r, c], [tr, tc]], caps: new_caps }); }
             } else {
                 let mr = r + dr, mc = c + dc, opp_pos = null;
@@ -460,7 +461,8 @@
                     let new_caps = [...caps, [mr, mc]];
                     let sub_res = [];
                     _find_caps(game, tr, tc, piece, new_caps, start, sub_res);
-                    if (sub_res.length > 0) { for (let s of sub_res) res.push({ path: [[r, c], ...s.path.slice(1)], caps: s.caps }); }
+                    // FIXED: Include intermediate squares in path
+                    if (sub_res.length > 0) { for (let s of sub_res) res.push({ path: [[r, c], ...s.path], caps: s.caps }); }
                     else { res.push({ path: [[r, c], [tr, tc]], caps: new_caps }); }
                     tr += dr; tc += dc;
                 }
@@ -1308,12 +1310,13 @@
                     });
                 }
             } else if (type === 'games') {
-                // FIXED: Removed orderByChild to prevent Firebase from hiding old games without timestamp
-                const gSnap = await db.ref('users/' + currentUid + '/game_history').limitToLast(50).once('value');
+                // FIXED: Fetch all games and slice in JS to avoid Firebase limit issues
+                const gSnap = await db.ref('users/' + currentUid + '/game_history').once('value');
                 let games = [];
                 gSnap.forEach(c => games.push(c.val()));
                 // Sort safely in JavaScript
                 games.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+                games = games.slice(0, 50); // Get top 50
 
                 if (games.length === 0) {
                     html = '<p style="text-align:center; color:#666;">No games played yet.</p>';
@@ -1452,7 +1455,7 @@
                 else if (piece === B_MAN && tr === 7) new_piece = B_KING;
                 let sub_res = [];
                 _find_caps(g, tr, tc, new_piece, new_caps, start, sub_res);
-                if (sub_res.length > 0) { for (let s of sub_res) res.push({ path: [[r, c], ...s.path.slice(1)], caps: s.caps }); }
+                if (sub_res.length > 0) { for (let s of sub_res) res.push({ path: [[r, c], ...s.path], caps: s.caps }); }
                 else { res.push({ path: [[r, c], [tr, tc]], caps: new_caps }); }
             } else {
                 let mr = r + dr, mc = c + dc, opp_pos = null;
@@ -1470,7 +1473,7 @@
                     if (g.board[tr][tc] !== EMPTY && !(start[0] === tr && start[1] === tc) && !caps.some(cap => cap[0] === tr && cap[1] === tc)) break;
                     let new_caps = [...caps, [mr, mc]], sub_res = [];
                     _find_caps(g, tr, tc, piece, new_caps, start, sub_res);
-                    if (sub_res.length > 0) { for (let s of sub_res) res.push({ path: [[r, c], ...s.path.slice(1)], caps: s.caps }); }
+                    if (sub_res.length > 0) { for (let s of sub_res) res.push({ path: [[r, c], ...s.path], caps: s.caps }); }
                     else { res.push({ path: [[r, c], [tr, tc]], caps: new_caps }); }
                     tr += dr; tc += dc;
                 }
@@ -1630,4 +1633,4 @@
 </script>
 
 </body>
-            </html>
+    </html>
