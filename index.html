@@ -746,6 +746,7 @@
     let currentStake = 0, isHidden = false;
     let currentUser = null, balanceListener = null;
     let matchInProgress = false; // Track if a game is active for disconnect logic
+    let isMatchOver = false; // Prevent double-calling endMatch
 
     let logCaptchaAns = 0, regCaptchaAns = 0, resetCaptchaAns = 0;
 
@@ -896,8 +897,10 @@
     // DISCONNECT = LOSS LOGIC
     window.addEventListener('beforeunload', function(e) {
         if (matchInProgress && currentUser) {
+            let currentUid = localStorage.getItem('mw_session_user');
+            if (!currentUid) return;
             // Record loss due to disconnect
-            db.ref('users/' + currentUser.username + '/game_history').push({
+            db.ref('users/' + currentUid + '/game_history').push({
                 result: "Loss (Disconnected)",
                 stake: currentStake,
                 payout: 0,
@@ -1257,25 +1260,37 @@
             if (type === 'tx') {
                 let txs = [];
                 
-                // Fetch Withdrawals
+                // 1. Fetch Withdrawals
                 const wdSnap = await db.ref('withdraw_requests').orderByChild('uid').equalTo(currentUid).once('value');
                 wdSnap.forEach(c => {
                     let d = c.val();
                     txs.push({ type: 'Withdraw', amount: d.amount, status: d.status, date: d.createdAt || 0 });
                 });
                 
-                // Fetch Approved Deposits (Synced with webhook)
-                const depSnap = await db.ref('deposits').orderByChild('uid').equalTo(currentUid).once('value');
-                depSnap.forEach(c => {
+                // 2. Fetch Approved Deposits (Synced with webhook)
+                const depositsSnap = await db.ref('deposits').orderByChild('uid').equalTo(currentUid).once('value');
+                depositsSnap.forEach(c => {
                     let d = c.val();
-                    txs.push({ type: 'Deposit', amount: d.amount, status: d.status, date: d.creditedAt || d.createdAt || 0 });
+                    txs.push({ type: 'Deposit', amount: d.amount, status: 'Success', date: d.creditedAt || d.createdAt || 0 });
                 });
 
-                // Fetch Pending Deposits (so users see their pending payments too)
-                const pendSnap = await db.ref('pending_deposits').orderByChild('uid').equalTo(currentUid).once('value');
-                pendSnap.forEach(c => {
+                // 3. Fetch Pending Deposits & Apply your 30-min rule
+                const pendingSnap = await db.ref('pending_deposits').orderByChild('uid').equalTo(currentUid).once('value');
+                pendingSnap.forEach(c => {
                     let d = c.val();
-                    txs.push({ type: 'Deposit', amount: d.amount, status: 'pending', date: d.createdAt || 0 });
+                    const isOld = Date.now() - (d.createdAt || 0) > 30 * 60 * 1000; // 30 minutes
+                    let displayStatus = isOld ? 'Expired' : 'Pending';
+                    
+                    txs.push({ type: 'Deposit', amount: d.amount, status: displayStatus, date: d.createdAt || 0 });
+                    
+                    // If it's recent, try to verify it in the background
+                    if (!isOld) {
+                        fetch('https://mada-backend.vercel.app/api/verify-deposit', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ tx_ref: c.key })
+                        }).catch(()=>{});
+                    }
                 });
 
                 txs.sort((a, b) => b.date - a.date);
@@ -1335,6 +1350,7 @@
         updateWalletUI();
         currentStake = stake;
         matchInProgress = true; // Mark match as active
+        isMatchOver = false; // Reset match over flag
 
         document.getElementById('hubView').classList.remove('active');
         document.getElementById('gameView').classList.add('active');
@@ -1368,9 +1384,13 @@
     }
 
     function endMatch(winner, isForfeit) {
-        if (isAiThinking && !isForfeit) return;
-        isAiThinking = true;
+        if (isMatchOver) return; // Prevent double-calling
+        isMatchOver = true; // Mark match as over
+        isAiThinking = true; // Block further moves
         matchInProgress = false; // Mark match as ended
+        
+        let currentUid = localStorage.getItem('mw_session_user');
+        if (!currentUid) return;
         
         let pot = currentStake * 2;
         let fee = pot * 0.20;
@@ -1379,13 +1399,13 @@
         let title = "", text = "", result = "";
         if (winner === humanPlayer) {
             currentUser.mwk = (currentUser.mwk || 0) + payout;
-            db.ref('users/' + currentUser.username + '/mwk').set(currentUser.mwk);
+            db.ref('users/' + currentUid + '/mwk').set(currentUser.mwk);
             title = "🎉 You Won!";
             text = `You won K ${payout.toFixed(2)}! (20% platform fee of K ${fee.toFixed(2)} applied)`;
             result = "Win";
         } else if (winner === 0) {
             currentUser.mwk = (currentUser.mwk || 0) + currentStake;
-            db.ref('users/' + currentUser.username + '/mwk').set(currentUser.mwk);
+            db.ref('users/' + currentUid + '/mwk').set(currentUser.mwk);
             title = "🤝 Draw!";
             text = `Your stake of K ${currentStake.toFixed(2)} has been refunded.`;
             result = "Draw";
@@ -1397,7 +1417,7 @@
 
         // IMPROVED: Added .catch to log errors if it fails to save
         if (currentStake > 0) {
-            db.ref('users/' + currentUser.username + '/game_history').push({
+            db.ref('users/' + currentUid + '/game_history').push({
                 result: result,
                 stake: currentStake,
                 payout: result === 'Win' ? payout : 0,
@@ -1506,7 +1526,7 @@
             document.getElementById('depth_text').innerText = `AI Depth: ${e.data.depth} | Nodes: ${e.data.nodes.toLocaleString()}`;
         } else if (e.data.type === 'done') {
             isAiThinking = false;
-            applyMove(e.data.move, true);
+            if (!isMatchOver) applyMove(e.data.move, true);
         }
     };
 
@@ -1608,4 +1628,4 @@
 </script>
 
 </body>
-                                                                                                          </html>
+    </html> 
