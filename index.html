@@ -441,7 +441,6 @@
                 
                 let sub_res = [];
                 _find_caps(game, tr, tc, new_piece, new_caps, start, sub_res);
-                // FIXED: Include intermediate squares in path
                 if (sub_res.length > 0) { for (let s of sub_res) res.push({ path: [[r, c], ...s.path], caps: s.caps }); }
                 else { res.push({ path: [[r, c], [tr, tc]], caps: new_caps }); }
             } else {
@@ -461,7 +460,6 @@
                     let new_caps = [...caps, [mr, mc]];
                     let sub_res = [];
                     _find_caps(game, tr, tc, piece, new_caps, start, sub_res);
-                    // FIXED: Include intermediate squares in path
                     if (sub_res.length > 0) { for (let s of sub_res) res.push({ path: [[r, c], ...s.path], caps: s.caps }); }
                     else { res.push({ path: [[r, c], [tr, tc]], caps: new_caps }); }
                     tr += dr; tc += dc;
@@ -1310,13 +1308,11 @@
                     });
                 }
             } else if (type === 'games') {
-                // FIXED: Fetch all games and slice in JS to avoid Firebase limit issues
-                const gSnap = await db.ref('users/' + currentUid + '/game_history').once('value');
+                // FIXED: Safest way to fetch games without needing complex index rules
+                const gSnap = await db.ref('users/' + currentUid + '/game_history').orderByKey().limitToLast(50).once('value');
                 let games = [];
                 gSnap.forEach(c => games.push(c.val()));
-                // Sort safely in JavaScript
-                games.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-                games = games.slice(0, 50); // Get top 50
+                games.reverse(); // Newest first
 
                 if (games.length === 0) {
                     html = '<p style="text-align:center; color:#666;">No games played yet.</p>';
@@ -1344,6 +1340,11 @@
     }
 
     function startMatch(grade, stake) {
+        // FIXED: Reset flags immediately to prevent any stuck states from previous games
+        isMatchOver = false;
+        isAiThinking = false;
+        matchInProgress = false;
+
         if ((currentUser.mwk || 0) < stake) {
             alert("Insufficient balance. Please deposit K" + stake + " to play Grade " + grade);
             showDepositModal();
@@ -1355,7 +1356,6 @@
         updateWalletUI();
         currentStake = stake;
         matchInProgress = true; // Mark match as active
-        isMatchOver = false; // Reset match over flag
 
         document.getElementById('hubView').classList.remove('active');
         document.getElementById('gameView').classList.add('active');
